@@ -13,6 +13,9 @@ class SourceMetadata(BaseModel):
     paper_id: str = Field(
         ..., description="Identifier derived from the output filename (stem)"
     )
+    doi: Optional[str] = Field(
+        default=None, description="Digital Object Identifier, if known"
+    )
     title: Optional[str] = Field(default=None, description="Paper title if known")
     section: Optional[str] = Field(default=None, description="Section heading if known")
     paragraph_id: Optional[str] = Field(
@@ -58,6 +61,14 @@ class NodeAggregate(BaseModel):
     confidence_samples: List[float] = Field(default_factory=list)
     linked_edges: List[LinkedEdgeSummary] = Field(default_factory=list)
     sources: List[SourceMetadata] = Field(default_factory=list)
+    # Nearest neighbor node keys (A.IN1+) aggregated across sources
+    neighbor_node_keys: List[str] = Field(
+        default_factory=list,
+        description="Unique list of immediate neighbor node keys gathered from the graph context",
+    )
+
+    # Array form for provenance-aware recursive merging (one entry per source)
+    attributes_by_source: List["NodeAttributesBySource"] = Field(default_factory=list)
 
 
 class EdgeAggregate(BaseModel):
@@ -73,6 +84,8 @@ class EdgeAggregate(BaseModel):
     rationales: List[str] = Field(default_factory=list)
     confidence_samples: List[float] = Field(default_factory=list)
     sources: List[SourceMetadata] = Field(default_factory=list)
+    # Array form for per-source provenance
+    attributes_by_source: List["EdgeAttributesBySource"] = Field(default_factory=list)
 
 
 class NodeViewForComparison(BaseModel):
@@ -84,13 +97,8 @@ class NodeViewForComparison(BaseModel):
     )
     source_metadata: List[SourceMetadata]
     linked_edges: List[LinkedEdgeSummary]
-
-
-class NodeComparisonInput(BaseModel):
-    """Input payload for the LLM to compare two nodes (data only)."""
-
-    node_a: NodeViewForComparison
-    node_b: NodeViewForComparison
+    # Immediate neighbor nodes included for robustness
+    neighbors: List["NeighborNodeSummary"] = Field(default_factory=list)
 
 
 class EdgeViewForComparison(BaseModel):
@@ -102,6 +110,30 @@ class EdgeViewForComparison(BaseModel):
     source_metadata: List[SourceMetadata]
 
 
-class EdgeComparisonInput(BaseModel):
-    edge_a: EdgeViewForComparison
-    edge_b: EdgeViewForComparison
+class NeighborNodeSummary(BaseModel):
+    node_key: str
+    text: str
+    aliases: List[str] = Field(default_factory=list)
+
+
+class NodeComparisonInput(BaseModel):
+    node_a: NodeViewForComparison
+    node_b: NodeViewForComparison
+
+
+class NodeAttributesBySource(BaseModel):
+    paper_id: str
+    doi: Optional[str] = None
+    text: Optional[str] = None
+    canonical_text: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+    confidence: Optional[float] = None
+
+
+class EdgeAttributesBySource(BaseModel):
+    paper_id: str
+    doi: Optional[str] = None
+    node_pairs: List[tuple[str, str]] = Field(default_factory=list)
+    rationales: List[str] = Field(default_factory=list)
+    confidence_samples: List[float] = Field(default_factory=list)
