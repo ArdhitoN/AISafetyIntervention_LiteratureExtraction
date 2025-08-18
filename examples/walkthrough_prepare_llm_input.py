@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Walkthrough: Prepare data-only LLM inputs for node comparison (Step 1)
 This script demonstrates how to:
 1) Read structured extraction outputs from the `output/` directory
@@ -25,7 +24,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.merge_indexer import build_merge_index  # noqa: E402
-from src.merge_input_builder import build_node_comparison_input  # noqa: E402
+from src.merge_input_builder import (  # noqa: E402
+    build_node_comparison_input,
+    build_node_set_comparison_input,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,6 +51,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Node key for the second node (defaults to the second key found).",
+    )
+    parser.add_argument(
+        "--keys",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Optional list of node keys to build an N-way comparison payload.",
     )
     parser.add_argument(
         "--list",
@@ -98,16 +107,22 @@ def main() -> None:
             print(f" - {k}")
         return
 
-    key_a, key_b = select_keys(node_keys, args.key_a, args.key_b)
-
-    payload = build_node_comparison_input(index, key_a, key_b)
-    payload_json = payload.model_dump_json(indent=2)
-
-    print(f"Total nodes indexed: {len(node_keys)}")
-    print(f"Node A key: {key_a}")
-    print(f"Node B key: {key_b}")
-    print("\nData-only comparison payload:\n")
-    print(payload_json)
+    if args.keys:
+        payload = build_node_set_comparison_input(index, args.keys)
+        payload_json = payload.model_dump_json(indent=2)
+        print(f"Total nodes indexed: {len(node_keys)}")
+        print(f"Node keys (N={len(args.keys)}): {', '.join(args.keys)}")
+        print("\nData-only N-way comparison payload:\n")
+        print(payload_json)
+    else:
+        key_a, key_b = select_keys(node_keys, args.key_a, args.key_b)
+        payload = build_node_comparison_input(index, key_a, key_b)
+        payload_json = payload.model_dump_json(indent=2)
+        print(f"Total nodes indexed: {len(node_keys)}")
+        print(f"Node A key: {key_a}")
+        print(f"Node B key: {key_b}")
+        print("\nData-only comparison payload:\n")
+        print(payload_json)
 
     if args.save is not None:
         args.save.parent.mkdir(parents=True, exist_ok=True)

@@ -11,9 +11,9 @@ from .merge_types import (
     NodeAggregate,
     LinkedEdgeSummary,
     SourceMetadata,
-    NodeAttributesBySource,
+    NodeSourceRecord,
     EdgeAggregate,
-    EdgeAttributesBySource,
+    EdgeSourceRecord,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def _upsert_edge_aggregate(
 ) -> EdgeAggregate:
     agg = _get_or_create_edge_aggregate(aggregates, edge)
     _append_edge_global_lists(agg, edge, source, target_key)
-    _upsert_edge_attributes_by_source(agg, edge, source, target_key)
+    _upsert_edge_merged_sources(agg, edge, source, target_key)
     return agg
 
 
@@ -80,8 +80,7 @@ def _get_or_create_edge_aggregate(
         node_pairs=[],
         rationales=[],
         confidence_samples=[],
-        sources=[],
-        attributes_by_source=[],
+        merged_sources=[],
     )
     return aggregates[edge_key]
 
@@ -92,21 +91,23 @@ def _append_edge_global_lists(
     agg.node_pairs.append((f"paper:{source.paper_id}", target_key))
     agg.rationales.append(edge.rationale)
     agg.confidence_samples.append(edge.confidence)
-    agg.sources.append(source)
 
 
-def _upsert_edge_attributes_by_source(
+def _upsert_edge_merged_sources(
     agg: EdgeAggregate, edge, source: SourceMetadata, target_key: str
 ) -> None:
     sid = source.paper_id
-    for entry in agg.attributes_by_source:
+    for entry in agg.merged_sources:
         if entry.paper_id == sid:
-            _merge_edge_attr_entry(entry, edge, sid, target_key)
+            _merge_edge_source_entry(entry, edge, sid, target_key)
             return
-    agg.attributes_by_source.append(
-        EdgeAttributesBySource(
+    agg.merged_sources.append(
+        EdgeSourceRecord(
             paper_id=sid,
             doi=getattr(source, "doi", None),
+            title=getattr(source, "title", None),
+            section=getattr(source, "section", None),
+            paragraph_id=getattr(source, "paragraph_id", None),
             node_pairs=[(f"paper:{sid}", target_key)],
             rationales=[edge.rationale],
             confidence_samples=[edge.confidence],
@@ -114,8 +115,8 @@ def _upsert_edge_attributes_by_source(
     )
 
 
-def _merge_edge_attr_entry(
-    entry: EdgeAttributesBySource, edge, sid: str, target_key: str
+def _merge_edge_source_entry(
+    entry: EdgeSourceRecord, edge, sid: str, target_key: str
 ) -> None:
     entry.node_pairs.append((f"paper:{sid}", target_key))
     entry.rationales.append(edge.rationale)
@@ -132,8 +133,8 @@ def _upsert_node_aggregate(
             return aggregates[key]
 
         agg = aggregates[key]
-        _merge_node_aggregate_fields(agg, node, source)
-        _upsert_node_attributes_by_source(agg, node, source)
+        _merge_node_aggregate_fields(agg, node)
+        _upsert_node_merged_source(agg, node, source)
         return agg
     except Exception as e:
         logger.debug(f"Error upserting node {getattr(node, 'name', 'unknown')}: {e}")
@@ -157,33 +158,27 @@ def _create_node_aggregate(node, key: str, source: SourceMetadata) -> NodeAggreg
     sid = source.paper_id
     agg = NodeAggregate(
         node_key=key,
-        text=node.name,
         canonical_text=node.canonical_name or node.name,
+        merged_text=node.name,
         aliases=list(node.aliases or []),
         notes=[node.notes] if getattr(node, "notes", None) else [],
         confidence_samples=[node.confidence] if node.confidence is not None else [],
         linked_edges=[],
-        sources=[source],
+        merged_sources=[],
     )
-    _seed_node_attributes_by_source(agg, node, source, sid)
+    _seed_node_merged_source(agg, node, source, sid)
     return agg
 
 
-def _merge_node_aggregate_fields(
-    agg: NodeAggregate, node, source: SourceMetadata
-) -> None:
-    if (
-        node.canonical_name
-        and node.canonical_name.lower() == agg.canonical_text.lower()
-    ):
-        agg.text = node.name
+def _merge_node_aggregate_fields(agg: NodeAggregate, node) -> None:
+    if not agg.merged_text:
+        agg.merged_text = node.name
     agg.aliases = _merge_alias_lists(agg.aliases, node.aliases or [])
     note_text = getattr(node, "notes", None)
     if note_text and note_text not in agg.notes:
         agg.notes.append(note_text)
     if node.confidence is not None:
         agg.confidence_samples.append(node.confidence)
-    agg.sources.append(source)
 
 
 def _merge_alias_lists(existing: List[str], new_aliases: List[str]) -> List[str]:
@@ -192,28 +187,32 @@ def _merge_alias_lists(existing: List[str], new_aliases: List[str]) -> List[str]
     return list(alias_set)
 
 
-def _upsert_node_attributes_by_source(
+def _upsert_node_merged_source(
     agg: NodeAggregate, node, source: SourceMetadata
 ) -> None:
     sid = source.paper_id
-    for entry in agg.attributes_by_source:
+    for entry in agg.merged_sources:
         if entry.paper_id == sid:
-            _merge_node_attr_entry(entry, node, sid)
+            _merge_node_source_entry(entry, node, sid)
             return
-    agg.attributes_by_source.append(
-        NodeAttributesBySource(
+    agg.merged_sources.append(
+        NodeSourceRecord(
             paper_id=sid,
             doi=getattr(source, "doi", None),
+            title=getattr(source, "title", None),
+            section=getattr(source, "section", None),
+            paragraph_id=getattr(source, "paragraph_id", None),
             text=node.name,
             canonical_text=node.canonical_name or node.name,
             aliases=list(node.aliases or []),
             notes=[node.notes] if getattr(node, "notes", None) else [],
             confidence=node.confidence,
+            context=_build_context_for_node(node, agg),
         )
     )
 
 
-def _merge_node_attr_entry(entry: NodeAttributesBySource, node, sid: str) -> None:
+def _merge_node_source_entry(entry: NodeSourceRecord, node, sid: str) -> None:
     entry.text = node.name or entry.text
     entry.canonical_text = node.canonical_name or entry.canonical_text
     if node.aliases:
@@ -223,22 +222,45 @@ def _merge_node_attr_entry(entry: NodeAttributesBySource, node, sid: str) -> Non
             entry.notes.append(node.notes)
     if node.confidence is not None:
         entry.confidence = node.confidence
+    # Recompute context minimally to include any new notes
+    # (edge rationales are already appended via linked_edges)
+    # Keep existing context if recomputation yields none
+    new_ctx = [c for c in entry.context if c] if hasattr(entry, "context") else []
+    if getattr(node, "notes", None):
+        new_ctx.append(node.notes)
+    entry.context = new_ctx or entry.context
 
 
-def _seed_node_attributes_by_source(
+def _seed_node_merged_source(
     agg: NodeAggregate, node, source: SourceMetadata, sid: str
 ) -> None:
-    agg.attributes_by_source.append(
-        NodeAttributesBySource(
+    agg.merged_sources.append(
+        NodeSourceRecord(
             paper_id=sid,
             doi=getattr(source, "doi", None),
+            title=getattr(source, "title", None),
+            section=getattr(source, "section", None),
+            paragraph_id=getattr(source, "paragraph_id", None),
             text=node.name,
             canonical_text=node.canonical_name or node.name,
             aliases=list(node.aliases or []),
             notes=[node.notes] if getattr(node, "notes", None) else [],
             confidence=node.confidence,
+            context=_build_context_for_node(node, agg),
         )
     )
+
+
+def _build_context_for_node(node, agg: NodeAggregate) -> list[str]:
+    # Collect context from existing aggregate linked edges (if any) plus notes
+    ctx: list[str] = []
+    for e in getattr(agg, "linked_edges", []) or []:
+        if e.rationale:
+            ctx.append(e.get_context_for_node(agg.node_key))
+    note_text = getattr(node, "notes", None)
+    if note_text:
+        ctx.append(note_text)
+    return ctx
 
 
 def build_merge_index(output_dir: Path) -> MergeIndex:

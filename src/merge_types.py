@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 
@@ -50,9 +50,14 @@ class NodeAggregate(BaseModel):
         ...,
         description="Stable key used to identify this aggregate (e.g., canonical_name lowercased)",
     )
-    text: str = Field(..., description="Primary surface name for the node (name)")
     canonical_text: str = Field(
         ..., description="Canonical name provided by extraction"
+    )
+    # field to hold the user-visible text after merges; defaults to the
+    # current aggregate surface/canonical text prior to any merge actions.
+    merged_text: str | None = Field(
+        default=None,
+        description="Short title/name of the node after latest merge; raw text if no merges yet",
     )
     aliases: List[str] = Field(default_factory=list)
     notes: List[str] = Field(
@@ -60,15 +65,14 @@ class NodeAggregate(BaseModel):
     )
     confidence_samples: List[float] = Field(default_factory=list)
     linked_edges: List[LinkedEdgeSummary] = Field(default_factory=list)
-    sources: List[SourceMetadata] = Field(default_factory=list)
     # Nearest neighbor node keys (A.IN1+) aggregated across sources
     neighbor_node_keys: List[str] = Field(
         default_factory=list,
         description="Unique list of immediate neighbor node keys gathered from the graph context",
     )
 
-    # Array form for provenance-aware recursive merging (one entry per source)
-    attributes_by_source: List["NodeAttributesBySource"] = Field(default_factory=list)
+    # Provenance-aware recursive merging (one entry per source/raw node)
+    merged_sources: List["NodeSourceRecord"] = Field(default_factory=list)
 
 
 class EdgeAggregate(BaseModel):
@@ -77,43 +81,45 @@ class EdgeAggregate(BaseModel):
     edge_key: str
     edge_type: str
     text: str = Field(..., description="Edge-level description if available")
-    node_pairs: List[tuple[str, str]] = Field(
+    node_pairs: List[Tuple[str, str]] = Field(
         default_factory=list,
         description="List of (source_node_key, target_node_key) tuples preserving exact pairings",
     )
     rationales: List[str] = Field(default_factory=list)
     confidence_samples: List[float] = Field(default_factory=list)
-    sources: List[SourceMetadata] = Field(default_factory=list)
-    # Array form for per-source provenance
-    attributes_by_source: List["EdgeAttributesBySource"] = Field(default_factory=list)
+    # Per-source edge provenance
+    merged_sources: List["EdgeSourceRecord"] = Field(default_factory=list)
 
 
 class NodeViewForComparison(BaseModel):
-    text: str
+    merged_text: str
     aliases: List[str]
     context: List[str] = Field(
         default_factory=list,
         description="Context strings: node notes and related rationales",
     )
-    source_metadata: List[SourceMetadata]
     linked_edges: List[LinkedEdgeSummary]
     # Immediate neighbor nodes included for robustness
     neighbors: List["NeighborNodeSummary"] = Field(default_factory=list)
+    # Full provenance-aware attributes to enable recursive merging decisions
+    merged_sources: List["NodeSourceRecord"] = Field(default_factory=list)
 
 
 class EdgeViewForComparison(BaseModel):
     text: str
-    node_pairs: List[tuple[str, str]] = Field(
+    node_pairs: List[Tuple[str, str]] = Field(
         description="List of (source_node_key, target_node_key) tuples for this edge type"
     )
     context: List[str] = Field(default_factory=list)
-    source_metadata: List[SourceMetadata]
+    merged_sources: List["EdgeSourceRecord"]
 
 
 class NeighborNodeSummary(BaseModel):
     node_key: str
     text: str
     aliases: List[str] = Field(default_factory=list)
+    # Provide lightweight context for neighbor nodes as well, to aid LLM decisions
+    context: List[str] = Field(default_factory=list)
 
 
 class NodeComparisonInput(BaseModel):
@@ -121,19 +127,31 @@ class NodeComparisonInput(BaseModel):
     node_b: NodeViewForComparison
 
 
-class NodeAttributesBySource(BaseModel):
+class NodeSetComparisonInput(BaseModel):
+    nodes: List[NodeViewForComparison]
+
+
+class NodeSourceRecord(BaseModel):
     paper_id: str
     doi: Optional[str] = None
+    title: Optional[str] = None
+    section: Optional[str] = None
+    paragraph_id: Optional[str] = None
     text: Optional[str] = None
     canonical_text: Optional[str] = None
     aliases: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
     confidence: Optional[float] = None
+    # Optional pre-baked context for this node as observed in this source
+    context: List[str] = Field(default_factory=list)
 
 
-class EdgeAttributesBySource(BaseModel):
+class EdgeSourceRecord(BaseModel):
     paper_id: str
     doi: Optional[str] = None
-    node_pairs: List[tuple[str, str]] = Field(default_factory=list)
+    title: Optional[str] = None
+    section: Optional[str] = None
+    paragraph_id: Optional[str] = None
+    node_pairs: List[Tuple[str, str]] = Field(default_factory=list)
     rationales: List[str] = Field(default_factory=list)
     confidence_samples: List[float] = Field(default_factory=list)
